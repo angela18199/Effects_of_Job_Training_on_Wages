@@ -1,0 +1,912 @@
+---
+title: "Effects of Job Training on Wages"
+author: "Akshay Punwatkar, Melody(Xinwen) Li, Derek Wales, Andrew Patterson, Tzu-Chun (Angela) Hsieh"
+date: "10/4/2019"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = F)
+```
+
+# Part I: Analysis of the effects of Training on Wages in 1978
+
+## SUMMARY    
+
+For this assignment we were working in our MIDS Assigned Teams, looking at a Dataset to determine whether vocational training through the National Support Work (NSW) helps people to gain higher wage. This project was carried out in order to answer several key research questions on this work training's effectiveness. To do this we used a series of methods, including Teamwork, Critical Thinking, Exploratory Data Analysis, and Logistic Regression which ultimately lead to the model below. 
+
+
+## INTRODUCTION   
+
+```{r message=FALSE}
+library(ggplot2)
+library(ggcorrplot)
+library(arm)
+library(pROC)
+library(e1071)
+library(caret)
+library(knitr)
+library(broom)
+library(ggpubr)
+library(kableExtra)
+library(xtable)
+library(tidyverse)
+```
+
+```{r Importing Dataset and Preprocessing}
+#setwd("/Users/akshaypunwatkar/Library/Mobile Documents/com~apple~CloudDocs/DUKE/Course Work/2019 Fall - Modelling and Representation of Data/Team Project 1 due 4 Oct")
+
+#Importing data
+dataset = read.csv("/Users/yu/Documents/Duke/courses/19fall/IDS702.01 Modeling and Representation of Data/HW & LAB/Team Project 1/final/lalondedata.csv", header=T)
+dataset$X <- NULL
+dataset$treat <- factor(dataset$treat,levels=c(0,1),labels=c("Not Trained","Trained"))
+dataset$black <- factor(dataset$black,levels=c(0,1),labels=c("Not Black","Black"))
+dataset$hispan <- factor(dataset$hispan,levels=c(0,1),labels=c("Not Hispanic","Hispanic"))
+dataset$married <- factor(dataset$married,levels=c(0,1),labels=c("Not Married","Married"))
+dataset$nodegree <- factor(dataset$nodegree,levels=c(0,1),labels=c("Otherwise","DropOut"))
+
+dataset$educGrp <- rep(2,nrow(dataset))
+dataset$educGrp[dataset$age < 12 ] <- 1
+dataset$educGrp[dataset$age < 7 ] <- 0
+dataset$educGrp <- factor(dataset$educGrp)
+dataset$wageDiff <- dataset$re78-dataset$re74
+```
+
+```{r Data Metrics, include=FALSE}
+nrow(dataset)
+str(dataset)
+table(dataset$treat)
+table(dataset$treat,dataset$black)
+table(dataset$treat,dataset$hispan)
+table(dataset$treat,dataset$married)
+table(dataset$treat,dataset$nodegree)
+colnames(dataset)
+```
+
+This project seeks to answer the question about whether job training helps people to earn higher wages compared to a group of people who were unemployed in 1976 whose income in 1975 was below the poverty level. A linear regression was constructed to model the actual wage increase using various predictor variables, including treatment.
+
+
+## DATA  
+
+Data used in the analysis containing **614 observations** was a **non-randomized** subset of the original study. Also, observations in the data constitue **male** workers only. **Wages from 1975 were NOT included** in the study because they carried certain ambiguity since they overlapped the training period (1975-77).
+
+#### Data Dictionary :   
+
+```{r}
+ 
+DataDic = rbind(
+  "treat" ="Indicator whether or not a worker went through training",
+  "age"	= "Age of the Worker in years.",
+  "educ"	= "Years of education",
+  "black"	= "Indicator whether the worker belong to Black race or not",
+  "hisp" = 	"Indicator whether the worker belong to Hispanic race or not",
+  "married" = "Indicator whether the worker was married or not",
+  "nodegree"	= "Indicator whether the worker dropped out of high school or not",
+  "re74"	= "Worker's real annual earnings in 1974.",
+  "re75" ="Worker's real annual earnings in 1975.",
+  "re78"= "Worker's real annual earnings in 1978.")
+
+knitr::kable(
+ DataDic[,],
+ format = 'markdown',
+ booktabs = T,
+ caption= 'Chi-Square test results',
+ col.names = c("Description")
+)
+
+```
+
+\newpage
+
+#### Data Processing :   
+
+
+> Based on the intial analysis, the wages in 1978 **did not appear to follow the normal distribution** leading to right skewness, which can be attributed to almost 1/5 of wages being zero. A decision was made to remove the zero value wages from 1978. The resulting distribution showed some improvement towards being a normal distribution.    
+
+
+```{r EDA 1 Wage in 1978 and Training,  fig.height=2, fig.width=6,}
+#Plotting Distribution of Wages in 1978
+plot1 <- ggplot(data = dataset)+
+  geom_histogram(aes(re78),bins = 10)+
+  ggtitle("Wages in 1978 (w/ zero wages)") +
+  xlab("Wages in 1978") +
+  ylab("Number of People") +
+  theme(legend.position = "none",
+        plot.title = element_text(hjust = 0.5,size = 6),
+        strip.text.x = element_text(size=rel(0.6)),
+        strip.text.y = element_text(size=rel(0.6)),
+        axis.title.y = element_text(size = rel(0.6), angle = 90),
+        axis.title.x = element_text(size = rel(0.6), angle = 0),
+        axis.text.y = element_text(size = rel(0.6), angle = 0),
+        axis.text.x = element_text(size = rel(0.6), angle = 0))
+  
+
+#Plotting Distribution of Wages in 1978 without zero wages
+plot2 <- ggplot(data = dataset[which(dataset$re78>0),])+
+  geom_histogram(aes(re78),bins = 10)+
+  ggtitle("Wages in 1978 (w/o zero wages)") +
+  xlab("Wages in 1978") +
+  ylab("Number of People") +
+  theme(legend.position = "none",
+        plot.title = element_text(hjust = 0.5,size = 6),
+        strip.text.x = element_text(size=rel(0.6)),
+        strip.text.y = element_text(size=rel(0.6)),
+        axis.title.y = element_text(size = rel(0.6), angle = 90),
+        axis.title.x = element_text(size = rel(0.6), angle = 0),
+        axis.text.y = element_text(size = rel(0.6), angle = 0),
+        axis.text.x = element_text(size = rel(0.6), angle = 0))
+
+#Based on plot3 and plot4 we can concurr that the median wage among trained and non-trained is almost same
+
+plot121 <- ggplot(data = dataset[which(dataset$re78>0),])+
+  geom_histogram(aes(log(re78)),bins = 10)+
+  ggtitle("Log of Wages in 1978 (w/o zero wages)") +
+  xlab("Log Transformed Wages in 1978") +
+  ylab("Number of People") +
+  theme(legend.position = "none",
+        plot.title = element_text(hjust = 0.5,size = 6),
+        strip.text.x = element_text(size=rel(0.6)),
+        strip.text.y = element_text(size=rel(0.6)),
+        axis.title.y = element_text(size = rel(0.6), angle = 90),
+        axis.title.x = element_text(size = rel(0.6), angle = 0),
+        axis.text.y = element_text(size = rel(0.6), angle = 0),
+        axis.text.x = element_text(size = rel(0.6), angle = 0))
+
+ggarrange(plot1, plot2, plot121, nrow = 1, ncol=3)
+```
+
+#### Data Transformation :  
+
+> None of the data was transformed for the analysis. Log tranformation of the reponse variable (wages in 1978) was analysed and appeared to have a left skewness (as shown in the figure above), so based on this a decision was made to use the response variables without any transformations. 
+
+#### Exploratory data analysis :   
+
+> Based on the Initial data analysis, the following was concluded : 
+
+> +  It was evident that people within a certain **education range (7-12 years)** and people below a  certain **age (<30 years)** were more involved in the experiment. Also, both **age** and **education** appeared to have a nearly **constant linear** relationship with wages in 1978.
+> + Although, **wages in 1974** did appear to have an **incrementing linear relationship** with wages in 1978.
+> + **More** people with **black** race **received training** as compared to non-black.
+> + **Very few** people with **Hispanic** race **received training** as compared to non-hispanic.
+> + More non-married people received training as compared to married ones.
+> + More highschool drop-out people received training as compared to others.
+> + None of the continous variables appeared to be highly correlated.   
+
+```{r Checking Correlation Among variables, include=FALSE}
+correl = cor(dataset[which(dataset$re78>0), sapply(dataset, is.numeric)], method = c("spearman"))
+#ggcorrplot(correl, method = 'circle')
+#no correlation above 0.6 between variables 
+```
+
+```{r EDA 2 Training vs other Variables (1), message=FALSE, warning=FALSE, fig.height=2, fig.width=6, fig.align='center'}
+
+#Distribution of Education / training
+plot5 <- ggplot(data = dataset[which(dataset$re78>0),])+
+  geom_histogram(aes(x=educ, fill=treat), bins=20) +
+  xlab('Years of Education') + 
+  ylab('Number of People') +
+  ggtitle('Distribution of Training based on education')+
+  theme(legend.position = c(0.9, 0.9),
+         legend.title = element_blank(),
+        legend.text = element_text( size = 6),
+        legend.key.size =  unit(0.1, "in"),
+        legend.background = element_rect(fill="transparent", size=0.1),
+        plot.title = element_text(hjust = 0.5,size = 6),
+        strip.text.x = element_text(size=rel(0.6)),
+        strip.text.y = element_text(size=rel(0.6)),
+        axis.title.y = element_text(size = rel(0.6), angle = 90),
+        axis.title.x = element_text(size = rel(0.6), angle = 0),
+        axis.text.y = element_text(size = rel(0.6), angle = 0),
+        axis.text.x = element_text(size = rel(0.6), angle = 0))
+  
+#Distribution of Age / training
+plot6 <- ggplot(data = dataset[which(dataset$re78>0),])+
+  geom_histogram(aes(x=age, fill=factor(treat)), bins=20) +
+  xlab('Age in Years') + 
+  ylab('Number of People') +
+  ggtitle('Distribution of Training based on Age')+
+  theme(legend.position = c(0.9, 0.9),
+         legend.title = element_blank(),
+        legend.text = element_text( size = 6),
+        legend.key.size =  unit(0.1, "in"),
+        legend.background = element_rect(fill="transparent", size=0.1),
+        plot.title = element_text(hjust = 0.5,size = 6),
+        strip.text.x = element_text(size=rel(0.6)),
+        strip.text.y = element_text(size=rel(0.6)),
+        axis.title.y = element_text(size = rel(0.6), angle = 90),
+        axis.title.x = element_text(size = rel(0.6), angle = 0),
+        axis.text.y = element_text(size = rel(0.6), angle = 0),
+        axis.text.x = element_text(size = rel(0.6), angle = 0))
+
+ggarrange(plot5, plot6, nrow = 1, ncol=2)
+```
+
+#### Association with and within the Categorical Variables : 
+
+```{r Chi-Square, message=FALSE, warning=FALSE}
+t <- chisq.test(table(dataset[,c('re78','treat')]))
+b <- chisq.test(table(dataset[,c('re78','black')]))
+h <- chisq.test(table(dataset[,c('re78','hispan')]))
+m <- chisq.test(table(dataset[,c('re78','married')]))
+n <- chisq.test(table(dataset[,c('re78','nodegree')]))
+b1 <- chisq.test(table(dataset[,c('treat','black')]))
+h1 <- chisq.test(table(dataset[,c('treat','hispan')]))
+m1 <- chisq.test(table(dataset[,c('treat','married')]))
+n1 <- chisq.test(table(dataset[,c('treat','nodegree')]))
+
+
+Chisq_tab = data.frame('Var_1' = c('re78','re78', 're78', 're78', 're78'),
+                   'Var_2' = c('treat','black', 'hispan', 'married', 'nodegree'),
+                   'p-val' = round(c(t$p.value,b$p.value,h$p.value,m$p.value,n$p.value),5),
+                   'Significant' = c('No','Yes','No','No','No'),
+                   'Var__1' = c('treat', 'treat', 'treat', 'treat',''),
+                   'Var__2' = c('black', 'hispan', 'married', 'nodegree',''),
+                   'p-val_' = c(b1$p.value,h1$p.value,m1$p.value,n1$p.value,''),
+                   'Significant_' = c('Yes','Yes','Yes','Yes',''))
+knitr::kable(
+ Chisq_tab[,],
+ format = 'markdown',
+ booktabs = T,
+ caption= 'Chi-Square test results'
+)
+
+
+
+# Chisq_tab2 = data.frame()
+# 
+# knitr::kable(
+#  Chisq_tab2[,],
+#  format = 'markdown',
+#  booktabs = T,
+#  caption= 'Chi-Square test results'
+# )
+```
+
+
+```{r, fig.align='center', warning=FALSE, message=FALSE}
+
+plotLM1 <- ggplot(data = dataset[which(dataset$re78>0),])+
+  geom_point(aes(y=re78, x=age)) +
+  geom_smooth(aes(y=re78, x=age))+
+  xlab('Age in Years') + 
+  ylab('Wages in 1978') +
+  ylim(0,40000)+
+  ggtitle('Relationship b/w age and wages in 1978')+
+  theme(legend.position = c(0.9, 0.9),
+         legend.title = element_blank(),
+        legend.text = element_text( size = 6),
+        legend.key.size =  unit(0.1, "in"),
+        legend.background = element_rect(fill="transparent", size=0.1),
+        plot.title = element_text(hjust = 0.5,size = 6),
+        strip.text.x = element_text(size=rel(0.8)),
+        strip.text.y = element_text(size=rel(0.8)),
+        axis.title.y = element_text(size = rel(0.8), angle = 90),
+        axis.title.x = element_text(size = rel(0.8), angle = 0),
+        axis.text.y = element_text(size = rel(0.8), angle = 0),
+        axis.text.x = element_text(size = rel(0.8), angle = 0))
+
+plotLM2 <- ggplot(data = dataset[which(dataset$re78>0),])+
+  geom_point(aes(y=re78, x=educ)) +
+  geom_smooth(aes(y=re78, x=educ))+
+  xlab('Years of Education') + 
+  ylab('Wages in 1978') +
+  ylim(0,40000)+
+  ggtitle('Relationship b/w Education and wages in 1978')+
+  theme(legend.position = c(0.9, 0.9),
+         legend.title = element_blank(),
+        legend.text = element_text( size = 6),
+        legend.key.size =  unit(0.1, "in"),
+        legend.background = element_rect(fill="transparent", size=0.1),
+        plot.title = element_text(hjust = 0.5,size = 6),
+        strip.text.x = element_text(size=rel(0.8)),
+        strip.text.y = element_text(size=rel(0.8)),
+        axis.title.y = element_text(size = rel(0.8), angle = 90),
+        axis.title.x = element_text(size = rel(0.8), angle = 0),
+        axis.text.y = element_text(size = rel(0.8), angle = 0),
+        axis.text.x = element_text(size = rel(0.8), angle = 0))
+  
+plotLM3 <- ggplot(data = dataset[which(dataset$re78>0),])+
+  geom_point(aes(y=re78, x=re74))+
+  geom_smooth(aes(y=re78, x=re74))+
+  xlab('Wagws in 1974') + 
+  ylab('Wages in 1978') +
+  ylim(0,40000)+
+  ggtitle('Relationship b/w wages in 1974 and 1978')+
+  theme(legend.position = c(0.9, 0.9),
+         legend.title = element_blank(),
+        legend.text = element_text( size = 6),
+        legend.key.size =  unit(0.1, "in"),
+        legend.background = element_rect(fill="transparent", size=0.1),
+        plot.title = element_text(hjust = 0.5,size = 6),
+        strip.text.x = element_text(size=rel(0.8)),
+        strip.text.y = element_text(size=rel(0.8)),
+        axis.title.y = element_text(size = rel(0.8), angle = 90),
+        axis.title.x = element_text(size = rel(0.8), angle = 0),
+        axis.text.y = element_text(size = rel(0.8), angle = 0),
+        axis.text.x = element_text(size = rel(0.8), angle = 0))
+        
+
+ggarrange(plotLM1, plotLM2, plotLM3, nrow = 3, ncol=1)
+  
+```
+
+\newpage
+
+## MODELING   
+
+* The initial full model was performed using all the available variables (execpt wages in 1975) which resulted in a *adjusted R-Square* value of **15.04%** with **age**, **educ** and **re74** as significant. A stepwise-AIC method was applied over the full model and the resulting model included treatment, education, black, and wages in 1974 (re74).    
+
+* A model was then constructed with the 4 variables based on stepwise model construction, resulting in a model with an *adjusted R-Square* of **14%**. However, **Black** did NOT appear to be significant, and this result was **confirmed in an F-test** when compared to another model with the 3 covariates (excluding black race).     
+
+* Based on initial analysis, which showed some kind of relationship between **wages in 1978** and **age**, **age** was added back into the model. The significance of age in the model was confirmed by an F-Test.    
+
+* For the improvement of the model performace, several interactions between covariates were tested but none of the interactions appeared to be statistically significant.
+
+* Based on the evaluation of different models with different combinations of covariates and interactions, the **Final model** was constructed using **treat**, **age**, **educ** and **re74**, resulting in an *adjusted R-Square* for **16.25%**. Residual plots confirmed this model did not violate normality and independence. Equal variance and linearity do, however, appear to be violated. This could be because of a lack of data, especially since all zero re78 data points were removed. For these reasons, these violations were considered acceptable for the final model.   
+
+### Final Model : 
+
+\[\hat{Re}_{78}  = \hat\beta_0 + \hat\beta_1Treat_i+\hat\beta_2Educ_i+\hat\beta_3Re74_i+\hat\beta_4Age_i\]
+
+```{r Modeling - Full to Predict 78 Wages, include=FALSE}
+full_model <- lm(re78~treat+age+educ+black+hispan+married+nodegree+re74, data=dataset[which(dataset$re78>0),])
+#summary(full_model)
+
+Stepwise_model = stepAIC(full_model, direction='both', method='leapSeq')
+#summary(Stepwise_model) - Ouput of stepwise -> re78 ~ treat + educ + black + re74
+```
+
+```{r Modeling - After Stepwise to Predict 78 Wages}
+fit1 <- lm(re78 ~ treat + educ + black + re74, data=dataset[which(dataset$re78>0),])
+#summary(fit1)
+
+fit2 <- lm(re78 ~ treat + educ + re74, data=dataset[which(dataset$re78>0),])
+#anova(fit1,fit2)  - black race removal supported by ANOVA
+
+#Adding age
+fit3 <- lm(re78 ~ treat + educ + re74 + age, data=dataset[which(dataset$re78>0),])
+#anova(fit2,fit3) - Age is coming as signinficant in ANOVA
+
+fit_w_zero <- lm(re78~treat+age+educ+black+hispan+married+nodegree+re74, data=dataset)
+#summary(fit_w_zero)
+#step_w_zero <- stepAIC(fit_w_zero, direction = 'both')
+#fit1_w_zero <- lm(re78~treat+educ+re74+age, data=dataset)
+#summary(fit1_w_zero)
+```
+
+
+```{r Final Model without transformations or interactions to Predict 78 Wages, fig.align='center'}
+#adding interaction terms 
+fit4 <- lm(re78 ~ treat + educ + re74 + age , data=dataset[which(dataset$re78>0),])
+#summary(fit4)
+fit4_out = tidy(fit4)
+fit4_tab= confint(fit4)
+tab = cbind(fit4_out,fit4_tab)
+knitr::kable(
+  tab[,2:7], 
+  format = 'markdown',
+  booktabs = T
+)
+par(mfrow=c(2,1))
+#plot(fit4, which=c(1,2))
+```
+
+```{r Model with transformations or interactions to Predict 78 Wages re78 ~ treat + re74 + age }
+#adding interaction terms 
+fit5 <- lm(re78 ~ treat + re74 + age , data=dataset[which(dataset$re78>0),])
+# fit5_out = tidy(fit5)
+# knitr::kable(
+#   fit4_out, 
+#   format = 'markdown',
+#   booktabs = T
+# )
+#summary(fit5)
+# par(mfrow=c(2,2))
+# plot(fit5)
+fit6 <- lm(log(re78) ~ treat + re74 + age , data=dataset[which(dataset$re78>0),])
+#summary(fit6)
+```
+
+## RESULTS
+
+In the final model, 
+
+> * **treatment** did NOT appear to be a significant covariate for predicting wages in 1978. However, since the primary objective of the analysis was to quantify the effects of training, **treat** was included in the final model. Quantitively, given other variables are controlled, those who received treatment received **730.89** more dollars in 1978 than workers who did not receive training. The 95% confidence interval for the effect of treatment on wages was -670.00 dollars for the lower bound and 2128.78 dollars for the upper bound. This could show the inconsistency of the effects of training i.e. with a 95% confidence we can conclude that training might have a negative impact on wages (as low as -$670) or a positive impact on the wage (as high as $2100). 
+
+> * As for **demographics**, none of the racial groups turned out to be significant; this indicates that race does not have an effect on actual wages in 1978. 
+
+> * But for other **demographics**, **age** does appear to be a significant variable which was highlighted during the initial analysis. With every unit increase in age, the predicted pay in 1978 increased by 97.46 dollars according to the final model, although with 95% confidence we can say that this change could be as low as $22 or as high as $172. 
+
+> * **Education** also appeared significant for the prediction of wages in 1978; with every unit increase in the number of years of education, predicted wages increases by 395.58 dollars with a 95% confidence interval of ($148 - $642)
+
+> * Finally, **workers wages in 74** also appeared to be significant and can be associated with higher wages in 1978; with every unit increase in the wage of 1974, predicted wage increases by 33 cents with a 95% confidence interval of (22-43 cents).   
+
+
+## CONCLUSION 
+
+From this model, the job training treatment in this study is associated with an increase in pay as compared to those who did not receive treatment. 
+
+Limitations of this model include a lack of original data- removing those who did not make any money in 1978 reduced the data by about 140 samples. Related to this, this model does not determine if this job training actually helps someone to find a job. A future project could be to analyze this data and determine if the job training actually helps someone to get a job.
+
+From this, interesting future projects could be to compare different job training programs with each other to help determine the most effective way to incerease oppurtunity and wages for people who receive the training.
+
+
+\newpage
+
+
+# Part II: Effect of Training on Employment Status
+
+## Introduction 2
+This project seeks to answer the question about whether job training results in an increased odds of being employed compared to a group who did not receive job training. All people tested had an income below the poverty line in 1975. A logistic regression model was constructed to model the effect of predictor variables on the odds of employment status.
+
+```{r Importing Data, include = FALSE }
+lalondedata <- read.csv("/Users/angela/Documents/Duke/courses/19fall/IDS702.01 Modeling and Represent of Data/HW & LAB/Team Project 1/final/lalondedata.txt", header=TRUE,
+                        colClasses=c("treat" = "factor","black"  = "factor",
+                                     "hispan" =  "factor", "married" = "factor",
+                                     "nodegree" = "factor"))
+
+lalondedata$emp78 = 1
+lalondedata$emp78[lalondedata$re78 == 0 ] <- 0
+#str(lalondedata)
+```
+
+## Data 2
+Data was received as a .txt filed called lalondedata.txt. This data was imported into R, treating the data as a .csv file. For this data, a new column called emp78 was created based on the re78 column (wage data from 1978). For this new column, if the 1978 data was above zero, then that entry was assigned a value of 1 in the new column; if the 1978 wage data was 0, that entry was assigned a value of 0 in emp78. Age and income in 1974 (re74) were also mean centered to facilitate interpretation of the model. No other changes were made to the data. 
+
+
+## Explanatory Data Analysis
+
+Chi-squared was performed between emp78 as compared to five factor variables to check for multicolinearity. The five variables were treatment, black, Hispanic, married, and no degree. Of these, only black and emp78 have a significant p-value indicating they are dependent in relation to each other. Another Chi-squared test was performed on treatment and the other four categorical variables: black, Hispanic, married, and no degree. All contain significant p values, indicating they are all dependent on each other. Therefore, we tested these interaction terms while constructing the model. Below is the table of the results of the Chi-squared tests:
+```{r EDA1, echo = FALSE}
+#treat, black, hispan, married, nodegree
+
+t <- chisq.test(table(lalondedata[,c("emp78","treat")]))
+b <- chisq.test(table(lalondedata[,c("emp78","black")]))
+h <- chisq.test(table(lalondedata[,c("emp78","hispan")]))
+m <- chisq.test(table(lalondedata[,c("emp78","married")]))
+n <- chisq.test(table(lalondedata[,c("emp78","nodegree")]))
+
+b1 <- chisq.test(table(lalondedata[,c("treat","black")]))
+h1 <- chisq.test(table(lalondedata[,c("treat","hispan")]))
+m1 <- chisq.test(table(lalondedata[,c("treat","married")]))
+n1 <- chisq.test(table(lalondedata[,c("treat","nodegree")]))
+
+
+chitab = data.frame("Variable1A" = c("emp78","emp78", "emp78", "emp78", "emp78"),
+                    "Variable2A" = c("treat","black", "hispan", "married", "nodegree"),
+                    "p-valueA" = c(t$p.value,b$p.value,h$p.value,m$p.value,n$p.value),
+                    "SignificantA" = c("No","Yes","No","No","No"),
+                    "Variable1B" = c("treat", "treat", "treat", "treat",""),
+                     "Variable2B" = c("black", "hispan", "married", "nodegree",""),
+                     "p-valueB" = c(b1$p.value,h1$p.value,m1$p.value,n1$p.value,""),
+                     "SignificantB" = c("Yes","Yes","Yes","Yes",""))
+
+kable(
+  chitab[,],
+  format = 'markdown',
+  booktabs = T,
+  caption= "Chi-Square test results"
+)
+
+```
+
+
+Boxplots were constructed for emp78 on the quantitive variables (age, education, and re74). These box plots were also split between treatment and non-treatment plots. From these box plots, there is evidence of an interaction between treatment and age. This interaction was also considered when constructing the model.
+
+``` {r EDA2, fig.width =6, fig.height =2.5, fig.align='center', fig.show='hold',echo = FALSE}
+# black and emp78 have significant p-value, there is association and we
+# should not inlcude that in the model.
+
+
+# they are correlated and we should not include the interactions in the model
+
+########### check binned plot for quantative variables with emp78 ##############
+# quantative variables: age, educ, re74, re75, re78
+# age and treatment  different
+par(mfrow=c(1,3)) 
+boxplot(age~emp78,data=lalondedata,ylab="age",pch=25,xaxt='n',
+        xlab="employed in '78",col=c("red3","yellow3"),cex = 0.85,main ="All")
+axis(1,at=c(1,2),labels=c("No","Yes"))
+
+boxplot(age~emp78,data=lalondedata,subset= treat==1,ylab="age",
+        xlab="employed in '78",col=c("red3","yellow3"),xaxt='n',
+        pch = 25, cex = 0.85,main ="receive treatment")
+axis(1,at=c(1,2),labels=c("No","Yes"))
+boxplot(age~emp78,data=lalondedata,subset= treat==0,ylab="age",
+        xlab="employed in '78",col=c("red3","yellow3"),xaxt='n',
+        pch = 25, cex = 0.85,main ="do not receive treatment")
+axis(1,at=c(1,2),labels=c("No","Yes"))
+
+
+
+# education and treatment ~~~
+# boxplot(educ_c~emp78,data=lalondedata,ylab="age",pch=25,xaxt='n',
+#         xlab="employed in 78",col=c("red3","yellow3"),cex = 0.85,main ="All")
+# axis(1,at=c(1,2),labels=c("No","Yes"))
+# boxplot(educ_c~emp78,data=lalondedata,subset= treat==1,ylab="age",
+#         xlab="employed in '78",col=c("red3","yellow3"),xaxt='n',
+#         pch = 25, cex = 0.85,main ="receive treatment")
+# axis(1,at=c(1,2),labels=c("No","Yes"))
+# boxplot(educ_c~emp78,data=lalondedata,subset= treat==0,ylab="age",
+#         xlab="employed in '78",col=c("red3","yellow3"),xaxt='n',
+#         pch = 25, cex = 0.85,main ="do not receive treatment")
+# axis(1,at=c(1,2),labels=c("No","Yes"))
+
+
+# salary 74 and treatment different
+# boxplot(re74~emp78,data=lalondedata,ylab="74 salary",pch=25,xaxt='n',
+#         xlab="employed in 78",col=c("red3","yellow3"),cex = 0.85,main ="All")
+# axis(1,at=c(1,2),labels=c("No","Yes"))
+# boxplot(re74~emp78,data=lalondedata,subset= treat==1,
+#         xlab="employed in '78",col=c("red3","yellow3"),xaxt='n',
+#         pch = 25, cex = 0.85,main ="receive treatment")
+# axis(1,at=c(1,2),labels=c("No","Yes"))
+# boxplot(re74~emp78,data=lalondedata,subset= treat==0,
+#         xlab="employed in '78",col=c("red3","yellow3"),xaxt='n',
+#         pch = 25, cex = 0.85,main ="do not receive treatment")
+# axis(1,at=c(1,2),labels=c("No","Yes"))
+```
+
+
+Binnedplots for the continuous variables age, educ, and re74 were also constructed. From these plots, age does not follow the logit function pattern; there is a wave trend in the plot. Both education and re74 do appear to follow the logit pattern. From these observations of age, alternative strategies of handling this covariate were considered in model building, discussed below.
+
+```{r fig.width =8, fig.height =3, fig.align='center', fig.show='hold',echo = FALSE}
+
+# check whether age follows logit function
+par(mfrow=c(1,3))
+binnedplot(x=lalondedata$age,y=lalondedata$emp78,xlab="age",ylim = c(0.2,1),
+           col.int="white",ylab="emp78",main="Binned plot",col.pts="navy")
+#educ
+binnedplot(x=lalondedata$educ,y=lalondedata$emp78,xlab="education",ylim = c(0.5,1),
+           col.int="white",ylab="emp78",main="Binned plot",col.pts="navy")
+
+# re74
+binnedplot(x=lalondedata$re74,y=lalondedata$emp78,xlab="re74",ylim = c(0.5,1),
+           col.int="white",ylab="emp78",main="Binned plot",col.pts="navy")
+
+```
+
+## Models
+
+Quantitive covariates age and income in 1974 (re74) were centered for easier interpretation in these models. The full model included age, education, treatment, whether the person was black, whether the person was Hispanic, whether the person was married, whether the person did not have a degree, wage data from 1974 (re74), and interactions between all of these covariates. This was used to predict the log odds of employment in 1978. A step AIC model construction generated a model using age, re74, black, treatment, the interaction between black and treatment, the interaction between re74 and treatment, and the interaction between age and treatment as covariates.
+
+
+```{r Modeling, include = FALSE}
+################## add employment status
+# correl = cor(lalondedata[lalondedata$emp78, sapply(lalondedata, is.numeric)], method = c("spearman"))
+# ggcorrplot(correl, method = 'circle')
+
+# lalondedata$age_30 = 1
+# lalondedata$age_30[lalondedata$age_30 > 30] <- 0
+# center data
+lalondedata$age_c = lalondedata$age - mean(lalondedata$age)
+lalondedata$educ_c = lalondedata$educ - mean(lalondedata$educ)
+lalondedata$re74_c = lalondedata$re74 - mean(lalondedata$re74)
+
+####### full model #########
+train1 = glm(emp78 ~ (age_c + educ_c + treat + black + hispan + married + nodegree + re74_c  )^2, data =lalondedata, family = binomial)
+#summary(train1)
+
+Conf_mat <- confusionMatrix(as.factor(ifelse(fitted(train1) >= mean(lalondedata$emp78), "1","0")),
+                            as.factor(lalondedata$emp78),positive = "1")
+Conf_mat$table
+Conf_mat$overall["Accuracy"]
+Conf_mat$byClass[c("Sensitivity","Specificity")]
+
+#roc(lalondedata$emp78,fitted(train1),plot=T,print.thres="best",legacy.axes=T,print.auc =T,col="red")
+
+
+############# use AIC to choose ##############
+step(glm(emp78~1,data=lalondedata,family=binomial),scope=formula(train1),direction="both",
+     trace=0,k = 2)
+
+
+train2 = glm(emp78 ~ age_c + re74_c + black + treat + re74_c:black +
+               age_c:treat + black:treat, data =lalondedata, family = binomial)
+summary(train2)
+Conf_mat <- confusionMatrix(as.factor(ifelse(fitted(train2) >= mean(lalondedata$emp78), "1","0")),
+                            as.factor(lalondedata$emp78),positive = "1")
+#Conf_mat$table
+#Conf_mat$overall["Accuracy"]
+#Conf_mat$byClass[c("Sensitivity","Specificity")]
+
+```
+
+```{r Modeling2, echo = FALSE,fig.width =10, fig.height =3, fig.align='center', fig.show='hold'}
+par(mfrow = c(1,3))
+invisible(roc(lalondedata$emp78,fitted(train2),plot=T,print.thres="best",legacy.axes=T,print.auc =T,col="red"))
+
+
+rawresid1 <- residuals(train2,"resp")
+
+#binned residual plots looks okay
+binnedplot(x=fitted(train2),y=rawresid1,xlab="Pred. probabilities",
+           col.int="red4",ylab="Avg. residuals",main="Binned residual plot",col.pts="navy")
+
+# age vs residual looks not okay there are a trend, and we tried to split age group
+binnedplot(x=lalondedata$age,y=rawresid1,xlab="age",
+           col.int="red4",ylab="Avg. residuals",main="Binned residual plot",col.pts="navy")
+
+
+```
+The binned plot of residual vs predicted probability seems acceptable without any trends. However, as discussed in the EDA, the previous pattern of age still exists in the model. This means that the model loses information on age. To try and correct for this, age was split into two groups, one below 30 years old and one above 30 years old. This converted the continuous age variable into a two factor variable. Testing the model with the new age predictor did not improve the model, and age was not significant. Therefore, age as a continuous variable was used in the models.
+
+## Model Selection
+
+The full model had an accuracy of 0.634, which is higher than the step constructed model accuracy of 0.611. This indicates the full model is actually slightly more accurate than the constructed model but with an offset of containing much more predictor variables. For the full model, sensitivity was 0.611, compared to the sensitivity of 0.616 for the constructed model. Both sensitivities are reasonably high. The specificity of the full model was 0.706, and the specificity of the constructed model was 0.611. The full model has a higher specificity, indicating the full model has less false negatives than the constructed model. For the full model, AUC was 0.730, while the AUC for the 0.667. Despite the lower values of the constructed model compared to the full model, the constructed model was ultimately used as the final model. This was because the values for the constructed model were acceptable while removing many insignficant interactions and covariates. 
+
+Additionally, Chi-squared tests were performed on the final model comparing the final model with a single removed interaction term (two remaining). This was done for every interaction term, and then for all the remaining predictors. All p-values were significant, indicating all of the interactions are significant in the model. 
+
+Equation for the final model:
+$$\begin{aligned}
+log(\frac{Employed}{1-Employed})=& B_0 + B_1Treatment_{yes} + B_2Age + B_3Black \\
+& + B_4Re_{74} + B_5Re_{74}*Black + B_6Age*Treatment_{yes} + B_7Black*Treatment_{yes}  \\ 
+\end{aligned}$$
+
+Table describing the final model:
+```{r echo = FALSE,results='asis'}
+print(xtable(tidy(train2, exponentiate=TRUE, conf.int = TRUE), digits=5),type = "latex")
+```
+
+\newpage
+## Results and Interpretations
+
+All the coefficient estimates in the table were exponentiated.
+
+The intercept of 3.846 has a significant p-value. This intercept means that a male worker with average age, average '74 salary, non-black race, and does not receive treatment would have odds of employment in 78 at 3.846. For the confidence interval, there is a 95% confidence that the intercept will lie between 2.935 and 5.116. 
+
+The coefficient of centered '74 salary is 1.0001 with a significant p-value, which means that holding everything else constant, one year increase in the average '74 salary would have 100.01% increase of the odds of employment in 1978.
+
+The coefficient of receving training is 5.09 with a significant p-value of 0.03, which means that holding everything else constant, receving training would have 500% increase of the odds of been employed in 1978 compare to someone does not receve training and with 95% confidence that the odds will lie between 1.43659 and 32.46978. The range of the effect of training on the odds of employment is very broad. This means that training can have a positive effect on employment status.
+
+The coefficient of the interaction term (age * treatment) is 1.08  with a significant p-value of 0.004, which means that holding everything else constant, one year increase in the age with training been 1 would have a 8% increase in the odds of been employed in 1978 compare to one year increase in age without receving training.
+
+For the demographic groups, the coefficient of centered age is 0.946 with a significant p-value, and the coefficient means that holding everything else constant, a one year increase in age would have 94.6% increase of the odds of employment in 1978 and 95% confidence that the odds will lie between 0.925 and 0.967. The interpretation of this result is that as age increases, odds of employment increases.
+
+For demographic groups, while black is a covariate in the final model, it is not considered a signficant covariate due to a higher p-value than 0.05. However, the interaction between black and wages in 1974 (re74) is slightly significant, indicating that, while black is not directly a significant effect on determining employment, there does appear to be a signficant interaction between the black covariate and the wages in 1974 which influences employment. Further research on this interaction could be interesting to further understand social structures.
+
+
+
+## Conclusions
+
+From this model, it appears that treatment does have a positive effect on whether a person had a job in 1978. The confidence interval is quite large, and the accuracy is only about 61.1% accurate at predicting our data. However, this model can still provide insight into whether job training can have an effect on whether a low wage male will be employed in 1978.
+
+For further research, an interesting association appears to exist between age and treatment; further research to determine why this interaction exists could help to target the treatment more effectively to different age groups. 
+
+\newpage
+
+# APPENDIX   
+
+> * **Graph 1**      
+
+$~$  
+
+```{r, fig.align='center', out.width="60%"}
+
+#distribution of wages received in 1978 for trained and non-trained 
+plot3 <- ggplot(aes(x=as.factor(treat), y=re78), data=dataset)+
+  geom_violin(aes(fill=treat))+
+  geom_boxplot(width=0.3 ) +
+  xlab("Training Received") +
+  ylab("Wages in 1978") +
+  ggtitle("Distribution of Wages in 1978 (w/ zero wages) for Trained and Non-trained") +
+   theme(legend.position = "none",
+        plot.title = element_text(hjust = 0.5,size = 6),
+        strip.text.x = element_text(size=rel(0.8)),
+        strip.text.y = element_text(size=rel(0.8)),
+        axis.title.y = element_text(size = rel(0.8), angle = 90),
+        axis.title.x = element_text(size = rel(0.8), angle = 0),
+        axis.text.y = element_text(size = rel(0.8), angle = 0),
+        axis.text.x = element_text(size = rel(0.8), angle = 0))
+
+#distribution of wages received in 1978 for trained and non-trained w/o zero
+plot4 <- ggplot(aes(x=as.factor(treat), y=re78), data=dataset[which(dataset$re78>0),])+
+  geom_violin(aes(fill=treat))+
+  geom_boxplot(width=0.3) +
+  xlab("Training Received") +
+  ylab("Wages in 1978") +
+  ggtitle("Distribution of Wages in 1978 (w/o zero wages) for Trained and Non-trained") +
+   theme(legend.position = "none",
+        plot.title = element_text(hjust = 0.5,size = 6),
+        strip.text.x = element_text(size=rel(0.8)),
+        strip.text.y = element_text(size=rel(0.8)),
+        axis.title.y = element_text(size = rel(0.8), angle = 90),
+        axis.title.x = element_text(size = rel(0.8), angle = 0),
+        axis.text.y = element_text(size = rel(0.8), angle = 0),
+        axis.text.x = element_text(size = rel(0.8), angle = 0))
+
+ggarrange(plot3, plot4, nrow = 1, ncol=2)
+
+```
+
+> * **Graph 2**    
+
+$~$
+
+```{r EDA 2 Training vs other Variables (2), message=FALSE, warning=FALSE, out.width='80%', fig.align='center'}
+#Distribution of Black race / training
+plot7 <- ggplot(data = dataset[which(dataset$re78>0),])+
+  geom_bar(aes(x=black, fill=treat),width = 0.2) +
+   xlab('Race') + 
+  ylab('Number of People') +
+  ggtitle('Distribution of Training based on Black Race')+
+  theme(legend.position = c(0.9, 0.9),
+         legend.title = element_blank(),
+        legend.text = element_text( size = 6),
+        legend.key.size =  unit(0.1, "in"),
+        legend.background = element_rect(fill="transparent", size=0.1),
+        plot.title = element_text(hjust = 0.5,size = 6),
+        strip.text.x = element_text(size=rel(0.8)),
+        strip.text.y = element_text(size=rel(0.8)),
+        axis.title.y = element_text(size = rel(0.8), angle = 90),
+        axis.title.x = element_text(size = rel(0.8), angle = 0),
+        axis.text.y = element_text(size = rel(0.8), angle = 0),
+        axis.text.x = element_text(size = rel(0.8), angle = 0))
+
+  
+#Distribution of Hispanice Race / training
+plot8 <- ggplot(data = dataset[which(dataset$re78>0),])+
+  geom_bar(aes(x=hispan, fill=treat),width = 0.2) +
+   xlab('Race') + 
+  ylab('Number of People') +
+  ggtitle('Distribution of Training based on Hispanic Race')+
+  theme(legend.position = c(0.9, 0.9),
+         legend.title = element_blank(),
+        legend.text = element_text( size = 6),
+        legend.key.size =  unit(0.1, "in"),
+        legend.background = element_rect(fill="transparent", size=0.1),
+        plot.title = element_text(hjust = 0.5,size = 6),
+        strip.text.x = element_text(size=rel(0.8)),
+        strip.text.y = element_text(size=rel(0.8)),
+        axis.title.y = element_text(size = rel(0.8), angle = 90),
+        axis.title.x = element_text(size = rel(0.8), angle = 0),
+        axis.text.y = element_text(size = rel(0.8), angle = 0),
+        axis.text.x = element_text(size = rel(0.8), angle = 0))
+
+#Distribution of Marriage / training
+plot9 <- ggplot(data = dataset[which(dataset$re78>0),])+
+  geom_bar(aes(x=married, fill=treat),width = 0.2) +
+   xlab('Marriage Status') + 
+  ylab('Number of People') +
+  ggtitle('Distribution of Training based on Marriage')+
+  theme(legend.position = c(0.9, 0.9),
+         legend.title = element_blank(),
+        legend.text = element_text( size = 6),
+        legend.key.size =  unit(0.1, "in"),
+        legend.background = element_rect(fill="transparent", size=0.1),
+        plot.title = element_text(hjust = 0.5,size = 6),
+          strip.text.x = element_text(size=rel(0.8)),
+        strip.text.y = element_text(size=rel(0.8)),
+        axis.title.y = element_text(size = rel(0.8), angle = 90),
+        axis.title.x = element_text(size = rel(0.8), angle = 0),
+        axis.text.y = element_text(size = rel(0.8), angle = 0),
+        axis.text.x = element_text(size = rel(0.8), angle = 0))
+
+#Distribution of Degree/ training
+plot10 <- ggplot(data = dataset[which(dataset$re78>0),])+
+  geom_bar(aes(x=nodegree, fill=treat),width = 0.2) +
+   xlab('High school Degree') + 
+  ylab('Number of People') +
+  ggtitle('Distribution of Training based on Degree')+
+  theme(legend.position = c(0.9, 0.9),
+        legend.title = element_blank(),
+        legend.text = element_text( size = 6),
+        legend.key.size =  unit(0.1, "in"),
+        legend.background = element_rect(fill="transparent", size=0.1),
+        plot.title = element_text(hjust = 0.5,size = 6),
+        strip.text.x = element_text(size=rel(0.8)),
+        strip.text.y = element_text(size=rel(0.8)),
+        axis.title.y = element_text(size = rel(0.8), angle = 90),
+        axis.title.x = element_text(size = rel(0.8), angle = 0),
+        axis.text.y = element_text(size = rel(0.8), angle = 0),
+        axis.text.x = element_text(size = rel(0.8), angle = 0))
+  
+
+ggarrange(plot7, plot8, plot9, plot10, nrow = 2, ncol=2)
+```
+
+\newpage
+> * **Graph 3**   
+
+$~$   
+
+```{r EDA 3 Non-zero Wages in 1978 vs other categorical variable, out.width='80%', fig.align='center'}
+
+plot11 <-ggplot(data = dataset[which(dataset$re78>0),])+
+  geom_histogram(aes(x=re78, fill=treat), bins=20) +
+  xlab('Wages in 1978') + 
+  ylab('Number of People') +
+  facet_grid(.~black) + 
+  ggtitle('Distribution of Wages in 1978 among black race')+
+  theme(legend.position = c(0.9, 0.9),
+        legend.title = element_blank(),
+        legend.text = element_text( size = 6),
+        legend.key.size =  unit(0.1, "in"),
+        legend.background = element_rect(fill="transparent", size=0.1),
+        plot.title = element_text(hjust = 0.5,size = 8),
+        strip.text.x = element_text(size=rel(0.8)),
+        strip.text.y = element_text(size=rel(0.8)),
+        axis.title.y = element_text(size = rel(0.8), angle = 90),
+        axis.title.x = element_text(size = rel(0.8), angle = 0),
+        axis.text.y = element_text(size = rel(0.8), angle = 0),
+        axis.text.x = element_text(size = rel(0.8), angle = 0))
+
+plot12 <-ggplot(data = dataset[which(dataset$re78>0),])+
+  geom_histogram(aes(x=re78, fill=treat), bins=20) +
+  xlab('Wages in 1978') + 
+  ylab('Number of People') +
+  facet_grid(.~hispan) + 
+  ggtitle('Distribution of Wages in 1978 among hispanic race')+
+  theme(legend.position = c(0.9, 0.9),
+        legend.title = element_blank(),
+        legend.text = element_text( size = 6),
+        legend.key.size =  unit(0.1, "in"),
+        legend.background = element_rect(fill="transparent", size=0.1),
+        plot.title = element_text(hjust = 0.5,size = 8),
+        strip.text.x = element_text(size=rel(0.8)),
+        strip.text.y = element_text(size=rel(0.8)),
+        axis.title.y = element_text(size = rel(0.8), angle = 90),
+        axis.title.x = element_text(size = rel(0.8), angle = 0),
+        axis.text.y = element_text(size = rel(0.8), angle = 0),
+        axis.text.x = element_text(size = rel(0.8), angle = 0))
+
+plot13 <-ggplot(data = dataset[which(dataset$re78>0),])+
+  geom_histogram(aes(x=re78, fill=treat), bins=20) +
+  xlab('Wages in 1978') + 
+  ylab('Number of People') +
+  facet_grid(.~married) + 
+  ggtitle('Distribution of Wages in 1978 among Married Population')+
+  theme(legend.position = c(0.9, 0.9),
+        legend.title = element_blank(),
+        legend.text = element_text( size = 6),
+        legend.key.size =  unit(0.1, "in"),
+        legend.background = element_rect(fill="transparent", size=0.1),
+        plot.title = element_text(hjust = 0.5,size = 8),
+        strip.text.x = element_text(size=rel(0.8)),
+        strip.text.y = element_text(size=rel(0.8)),
+        axis.title.y = element_text(size = rel(0.8), angle = 90),
+        axis.title.x = element_text(size = rel(0.8), angle = 0),
+        axis.text.y = element_text(size = rel(0.8), angle = 0),
+        axis.text.x = element_text(size = rel(0.8), angle = 0))
+
+plot14 <-ggplot(data = dataset[which(dataset$re78>0),])+
+  geom_histogram(aes(x=re78, fill=treat), bins=20) +
+  xlab('Wages in 1978') + 
+  ylab('Number of People') +
+  facet_grid(.~nodegree) + 
+  ggtitle('Distribution of Wages in 1978 among Drop-out')+
+  theme(legend.position = c(0.9, 0.9),
+        legend.title = element_blank(),
+        legend.text = element_text( size = 6),
+        legend.key.size =  unit(0.1, "in"),
+        legend.background = element_rect(fill="transparent", size=0.1),
+        plot.title = element_text(hjust = 0.5,size = 8),
+        strip.text.x = element_text(size=rel(0.8)),
+        strip.text.y = element_text(size=rel(0.8)),
+        axis.title.y = element_text(size = rel(0.8), angle = 90),
+        axis.title.x = element_text(size = rel(0.8), angle = 0),
+        axis.text.y = element_text(size = rel(0.8), angle = 0),
+        axis.text.x = element_text(size = rel(0.8), angle = 0))
+
+ggarrange(plot11, plot12, plot13, plot14, nrow = 2, ncol=2)
+```
+
+
+```{r Check_final_modell}
+# treat:black is significant p:0.04564
+train3 = glm(emp78 ~ age_c + re74 + black + treat + re74:black +
+               age_c:treat , data =lalondedata, family = binomial)
+anova(train2,train3,test= "Chisq")
+
+#  check black:re74  p:0.04771 
+train4 = glm(emp78 ~ age_c + re74 +black + treat  +
+               age_c:treat + black:treat, data =lalondedata, family = binomial)
+anova(train2,train4,test="Chisq")
+
+# check black and all the interactions of black they are significant
+train5 = glm(emp78 ~ age_c + re74  + treat + black:treat + black:re74+
+               age_c:treat, data =lalondedata, family = binomial)
+anova(train2,train5,test="Chisq")
+```
+
+
+
